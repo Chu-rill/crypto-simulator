@@ -1,0 +1,316 @@
+// Crypto Trading Simulator Prisma Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model - stores user account information
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  username       String   @unique
+  passwordHash   String   @map("password_hash")
+  firstName      String?  @map("first_name")
+  lastName       String?  @map("last_name")
+  initialBalance Decimal  @default(10000.00000000) @map("initial_balance") @db.Decimal(20, 8)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  isActive       Boolean  @default(true) @map("is_active")
+  emailVerified  Boolean  @default(false) @map("email_verified")
+
+  // Relations
+  portfolios   UserPortfolio[]
+  balance      UserBalance?
+  transactions Transaction[]
+  orders       MarketOrder[]
+  watchlists   UserWatchlist[]
+  priceAlerts  PriceAlert[]
+  achievements UserAchievement[]
+
+  @@map("users")
+}
+
+// Cryptocurrency model - master list of supported cryptocurrencies
+model Cryptocurrency {
+  id              String   @id @default(cuid())
+  symbol          String   @unique // BTC, ETH, etc.
+  name            String // Bitcoin, Ethereum
+  coingeckoId     String?  @map("coingecko_id")
+  coinmarketcapId String?  @map("coinmarketcap_id")
+  logoUrl         String?  @map("logo_url")
+  description     String?
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  // Relations
+  priceHistory PriceHistory[]
+  portfolios   UserPortfolio[]
+  transactions Transaction[]
+  orders       MarketOrder[]
+  watchlists   UserWatchlist[]
+  priceAlerts  PriceAlert[]
+
+  @@map("cryptocurrencies")
+}
+
+// Price history model - stores historical price data from APIs
+model PriceHistory {
+  id               String   @id @default(cuid())
+  cryptocurrencyId String   @map("cryptocurrency_id")
+  priceUsd         Decimal  @map("price_usd") @db.Decimal(20, 8)
+  marketCap        Decimal? @map("market_cap") @db.Decimal(25, 2)
+  volume24h        Decimal? @map("volume_24h") @db.Decimal(25, 2)
+  percentChange1h  Decimal? @map("percent_change_1h") @db.Decimal(8, 4)
+  percentChange24h Decimal? @map("percent_change_24h") @db.Decimal(8, 4)
+  percentChange7d  Decimal? @map("percent_change_7d") @db.Decimal(8, 4)
+  timestamp        DateTime @default(now())
+  source           String   @default("coingecko") // API source
+
+  // Relations
+  cryptocurrency Cryptocurrency @relation(fields: [cryptocurrencyId], references: [id])
+
+  @@index([cryptocurrencyId, timestamp])
+  @@index([timestamp])
+  @@map("price_history")
+}
+
+// User portfolios - tracks current holdings
+model UserPortfolio {
+  id               String   @id @default(cuid())
+  userId           String   @map("user_id")
+  cryptocurrencyId String   @map("cryptocurrency_id")
+  quantity         Decimal  @default(0) @db.Decimal(20, 8)
+  averageBuyPrice  Decimal? @map("average_buy_price") @db.Decimal(20, 8)
+  lastUpdated      DateTime @default(now()) @updatedAt @map("last_updated")
+
+  // Relations
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cryptocurrency Cryptocurrency @relation(fields: [cryptocurrencyId], references: [id])
+
+  @@unique([userId, cryptocurrencyId])
+  @@map("user_portfolios")
+}
+
+// User cash balances - tracks USD balance
+model UserBalance {
+  id          String   @id @default(cuid())
+  userId      String   @unique @map("user_id")
+  balanceUsd  Decimal  @default(0) @map("balance_usd") @db.Decimal(20, 8)
+  reservedUsd Decimal  @default(0) @map("reserved_usd") @db.Decimal(20, 8)
+  lastUpdated DateTime @default(now()) @updatedAt @map("last_updated")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_balances")
+}
+
+// Enums for transaction types and status
+enum TransactionType {
+  BUY
+  SELL
+  DEPOSIT
+  WITHDRAW
+
+  @@map("transaction_type")
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+  FAILED
+
+  @@map("transaction_status")
+}
+
+// Transactions model - records all trading activity
+model Transaction {
+  id               String            @id @default(cuid())
+  userId           String            @map("user_id")
+  cryptocurrencyId String?           @map("cryptocurrency_id")
+  type             TransactionType
+  quantity         Decimal           @db.Decimal(20, 8)
+  pricePerUnit     Decimal           @map("price_per_unit") @db.Decimal(20, 8)
+  totalAmount      Decimal           @map("total_amount") @db.Decimal(20, 8)
+  fee              Decimal           @default(0) @db.Decimal(20, 8)
+  status           TransactionStatus @default(COMPLETED)
+  createdAt        DateTime          @default(now()) @map("created_at")
+  executedAt       DateTime?         @map("executed_at")
+  notes            String?
+
+  // Relations
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cryptocurrency Cryptocurrency? @relation(fields: [cryptocurrencyId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([cryptocurrencyId, createdAt])
+  @@map("transactions")
+}
+
+// Market orders model - for limit orders and advanced trading
+enum OrderType {
+  MARKET
+  LIMIT
+  STOP_LOSS
+
+  @@map("order_type")
+}
+
+enum OrderSide {
+  BUY
+  SELL
+
+  @@map("order_side")
+}
+
+enum OrderStatus {
+  ACTIVE
+  FILLED
+  CANCELLED
+  PARTIAL
+  EXPIRED
+
+  @@map("order_status")
+}
+
+model MarketOrder {
+  id               String      @id @default(cuid())
+  userId           String      @map("user_id")
+  cryptocurrencyId String      @map("cryptocurrency_id")
+  orderType        OrderType   @map("order_type")
+  side             OrderSide
+  quantity         Decimal     @db.Decimal(20, 8)
+  price            Decimal?    @db.Decimal(20, 8) // NULL for market orders
+  status           OrderStatus @default(ACTIVE)
+  filledQuantity   Decimal     @default(0) @map("filled_quantity") @db.Decimal(20, 8)
+  createdAt        DateTime    @default(now()) @map("created_at")
+  expiresAt        DateTime?   @map("expires_at")
+  filledAt         DateTime?   @map("filled_at")
+
+  // Relations
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cryptocurrency Cryptocurrency @relation(fields: [cryptocurrencyId], references: [id])
+
+  @@index([status, cryptocurrencyId, price])
+  @@map("market_orders")
+}
+
+// Watchlists - user's favorite cryptocurrencies
+model UserWatchlist {
+  id               String   @id @default(cuid())
+  userId           String   @map("user_id")
+  cryptocurrencyId String   @map("cryptocurrency_id")
+  addedAt          DateTime @default(now()) @map("added_at")
+
+  // Relations
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cryptocurrency Cryptocurrency @relation(fields: [cryptocurrencyId], references: [id])
+
+  @@unique([userId, cryptocurrencyId])
+  @@map("user_watchlists")
+}
+
+// Price alerts model
+enum AlertCondition {
+  ABOVE
+  BELOW
+
+  @@map("alert_condition")
+}
+
+model PriceAlert {
+  id               String         @id @default(cuid())
+  userId           String         @map("user_id")
+  cryptocurrencyId String         @map("cryptocurrency_id")
+  targetPrice      Decimal        @map("target_price") @db.Decimal(20, 8)
+  condition        AlertCondition
+  isActive         Boolean        @default(true) @map("is_active")
+  isTriggered      Boolean        @default(false) @map("is_triggered")
+  triggeredAt      DateTime?      @map("triggered_at")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  message          String?
+
+  // Relations
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cryptocurrency Cryptocurrency @relation(fields: [cryptocurrencyId], references: [id])
+
+  @@index([isActive, cryptocurrencyId])
+  @@map("price_alerts")
+}
+
+// Trading sessions for analytics
+model TradingSession {
+  id           String    @id @default(cuid())
+  userId       String    @map("user_id")
+  startBalance Decimal   @map("start_balance") @db.Decimal(20, 8)
+  endBalance   Decimal?  @map("end_balance") @db.Decimal(20, 8)
+  totalTrades  Int       @default(0) @map("total_trades")
+  profitLoss   Decimal?  @map("profit_loss") @db.Decimal(20, 8)
+  startedAt    DateTime  @default(now()) @map("started_at")
+  endedAt      DateTime? @map("ended_at")
+  isActive     Boolean   @default(true) @map("is_active")
+
+  @@index([userId, startedAt])
+  @@map("trading_sessions")
+}
+
+// Achievement system
+model Achievement {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String
+  icon        String?
+  condition   String // JSON string describing unlock condition
+  points      Int      @default(0)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Relations
+  userAchievements UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id")
+  achievementId String   @map("achievement_id")
+  unlockedAt    DateTime @default(now()) @map("unlocked_at")
+  progress      Decimal? @db.Decimal(5, 2) // Percentage for partial achievements
+
+  // Relations
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id])
+
+  @@unique([userId, achievementId])
+  @@map("user_achievements")
+}
+
+// API rate limiting and caching
+model ApiCache {
+  id        String   @id @default(cuid())
+  endpoint  String
+  params    String? // JSON string of parameters
+  response  String // JSON response
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([endpoint, expiresAt])
+  @@map("api_cache")
+}
+
+// System settings
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
